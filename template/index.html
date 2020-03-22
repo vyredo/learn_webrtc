@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <div id="render"></div>
+    <script type="text/javascript">
+        const send = (e) => {
+            var msg = {
+                type: "message",
+                text: e.value ,
+                id:   12345678,
+                date: Date.now()
+            };
+            exampleSocket.send(JSON.stringify(msg))
+        }
+    </script>
+
+
+    <script>
+        var exampleSocket = new WebSocket("ws://localhost:9001/room");
+        exampleSocket.onclose = function(e){
+            console.log("CLOSING", " WTFFF")
+            console.log(e)
+        }
+        exampleSocket.onopen = function (event) {
+            console.log(event);
+            var msg = {
+                type: "message",
+                text: "HELLO WORLD  ",
+                id:   12345678,
+                date: Date.now()
+            };
+
+            // Send the msg object as a JSON-formatted string.
+            exampleSocket.send(JSON.stringify(msg));
+            exampleSocket.onmessage = (e) => {
+                console.log(e.data);
+                document.getElementById("render").innerText = e.data
+            }
+
+        };
+    </script>
+
+    <input onchange="send(this)"/>
+</body>
+</html>
