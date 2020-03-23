@@ -6,45 +6,181 @@
     <title>Document</title>
 </head>
 <body>
-    <div id="render"></div>
+    <p><button id="takeProfilePicture" type="button" autofocus>Create Profile Picture</button></p>
+    <video id="myVideoTag" autoplay></video>
+    <video id="theirVideoTag" autoplay></video>
+    
+    <div>
+        <label for="">Your Name</label><input id="myName" type="text"/>
+        <label for="">Message</label><input id="myMessage" type="text"/>
+        <input id="sendMessage" type="submit"/>
+        <div id="signaling_area">Message Output: <br/></div>
+        <div id="chatArea">Message Output: <br/></div>
+    </div>
     <script type="text/javascript">
-        const send = (e) => {
-            var msg = {
-                type: "message",
-                text: e.value ,
-                id:   12345678,
-                date: Date.now()
-            };
-            exampleSocket.send(JSON.stringify(msg))
+        const myVideoArea = document.querySelector("#myVideoTag");
+        const theirVideoArea = document.querySelector("#theirVideoTag");
+        const myName = document.querySelector("#myName");
+        const myMessage = document.querySelector("#myMessage");
+        const sendMessage = document.querySelector("#sendMessage");
+        const chatArea = document.querySelector("#chatArea");
+        const signalingArea = document.querySelector("#signaling_area");
+        const ROOM = "chat";
+        const SIGNAL_ROOM = "signal";
+
+        const configuration = {
+            iceServers: [{
+                url: "stun:stun.l.google.com:19302"
+            }]
         }
-    </script>
+        let rtcPeerConn;
 
-
-    <script>
-        var exampleSocket = new WebSocket("ws://localhost:9001/room");
+        const exampleSocket = new WebSocket("ws://localhost:9001/room");
+        const signalSocket = new WebSocket("ws://localhost:9001/signal");
+        signalSocket.onclose = e => console.error('signal socket is close', e)
         exampleSocket.onclose = function(e){
-            console.log("CLOSING", " WTFFF")
             console.log(e)
         }
-        exampleSocket.onopen = function (event) {
-            console.log(event);
-            var msg = {
-                type: "message",
-                text: "HELLO WORLD  ",
-                id:   12345678,
-                date: Date.now()
-            };
 
-            // Send the msg object as a JSON-formatted string.
-            exampleSocket.send(JSON.stringify(msg));
+        const ready_msg = {
+            type: "ready",
+            data: {chat_room: ROOM, signal_room: SIGNAL_ROOM}
+        };
+
+        function sendLocalDesc(desc){
+            rtcPeerConn.setLocalDescription(desc, () => {
+                signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Sending Local description ";
+                signalSocket.send({
+                    type: "signal",
+                    data: {
+                        messageType: "SDP",
+                        message: {
+                            sdp: rtcPeerConn.localDescription
+                        },
+                        room: SIGNAL_ROOM
+                    }
+                });
+            });
+        }
+
+        function logError(error) {
+            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + error.name + ": " + error.message;
+        }
+
+        signalSocket.onopen = ev => {
+            console.log('signalsocket', ev);
+            signalSocket.send(JSON.stringify(ready_msg));
+            signalSocket.send(JSON.stringify({
+                type: "signal",
+                data: { messageType: "user_here", message: "Are you readu for a calls?", room: "SIGNAL_ROOM" }
+            }))
+            
+            signalSocket.onmessage = e => {
+                const { type, data } = JSON.parse(e.data);
+                console.log("signaling_message", type, data)
+
+                switch(type){
+                    case "signaling_message":
+                        signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Signal received: " + data.messageType;
+                        if(!rtcPeerConn) {
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Starting signal... ";
+                            rtcPeerConn = new webkitRTCPeerConnection(configuration);
+                        }
+
+                        if(data.messageType !== "user_here"){
+                            const message = data.message;
+                            if(message.sdp){
+                                console.log("GET OFFER")
+
+                                rtcPeerConn.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
+                                    // if we received an offer, we need to answer
+                                    if(rtcPeerConn.remoteDescription === "offer"){
+                                        rtcPeerConn.createAnswer(sendLocalDesc, logError)
+                                    }
+                                }, logError)
+                            } else {
+                                rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
+                            }
+                            // return;
+                        }
+
+                      
+ 
+                        // send any ice candidates to the other peer
+                        rtcPeerConn.onicecandidate  = evt => {
+                            console.log('oncidecandidae', evt)
+                            if(evt.candidate){
+                                signalSocket.send(JSON.stringify({
+                                    type: "ice_candidate",
+                                    data: { 
+                                        message: {candidate: evt.candidate},
+                                        room: SIGNAL_ROOM
+                                    } 
+                                }))
+                            }
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Completeing that ice candidate... ";
+                        }
+
+                        rtcPeerConn.onaddstream = evt => {
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Going to add their stream...";
+                            theirVideoArea.src = URL.createObjectURL(evt.stream);
+                        }
+
+
+                        // negotiationneeded
+                        rtcPeerConn.onnegotiationneeded = () => {
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "on negotiation called";
+                            rtcPeerConn.createOffer(sendLocalDesc, logError)
+                        }
+                        // get a local stream, show it in our video tag and add it to be sent
+                        navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                        navigator.getUserMedia({
+                            audio: true, video: true
+                        }, stream => {
+                            if(!stream) return console.error("No stream");
+                            console.log(stream)
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + "Going to play my stream";
+                            // myVideoArea.src = URL.createObjectURL(stream);
+                            myVideoArea.srcObject = stream;
+                            rtcPeerConn.addStream(stream)
+                        }, error => {
+                            signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + error.name + ": " + error.message;
+                        });
+                    break;
+                }
+            }
+        }
+        exampleSocket.onopen =  (event) => {
+            console.log('exampleSocket', event);
+
+            exampleSocket.send(JSON.stringify(ready_msg));
             exampleSocket.onmessage = (e) => {
-                console.log(e.data);
-                document.getElementById("render").innerText = e.data
+                const { type, data } = JSON.parse(e.data);
+                console.log(type, data)
+
+                switch(type){
+                    case "announce":
+                        chatArea.innerHTML = chatArea.innerHTML + "<br/>" + data;
+                    break;
+                    case "message":
+                        chatArea.innerHTML = chatArea.innerHTML + "<br/>" + data.author + ": " + data.message;
+                    break;
+
+                  
+                }
             }
 
         };
-    </script>
 
-    <input onchange="send(this)"/>
+        
+       sendMessage.addEventListener("click", (ev) => {
+           exampleSocket.send(JSON.stringify({
+               type: "send",
+               data: {author: myName.value, message: myMessage.value, room: ROOM}
+           }));
+       })
+
+
+    </script>
 </body>
 </html>
